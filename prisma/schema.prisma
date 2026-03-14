@@ -1,0 +1,115 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  name          String
+  barcode       String   @unique
+  category      String
+  supplierId    String
+  unit          String
+  purchasePrice Float
+  salePrice     Float
+  currentStock  Int      @default(0)
+  maxCapacity   Int
+  criticalLevel Int
+  warningLevel  Int
+  leadTimeDays  Int      @default(2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  supplier      Supplier       @relation(fields: [supplierId], references: [id])
+  sales         SaleRecord[]
+  forecasts     ForecastResult[]
+  orderItems    OrderItem[]
+  movements     StockMovement[]
+}
+
+model SaleRecord {
+  id          String   @id @default(cuid())
+  productId   String
+  quantity    Int
+  salePrice   Float
+  totalAmount Float
+  soldAt      DateTime @default(now())
+  cashierId   String?
+
+  product     Product  @relation(fields: [productId], references: [id])
+}
+
+model ForecastResult {
+  id                String   @id @default(cuid())
+  productId         String
+  weekStartDate     DateTime
+  predictedQuantity Int
+  confidenceScore   Float
+  algorithm         String
+  createdAt         DateTime @default(now())
+
+  product           Product  @relation(fields: [productId], references: [id])
+}
+
+model Supplier {
+  id               String    @id @default(cuid())
+  name             String
+  contactName      String
+  email            String    @unique
+  phone            String
+  minOrderAmount   Float
+  deliveryDays     Int
+  reliabilityScore Int       @default(100)
+  isActive         Boolean   @default(true)
+
+  products         Product[]
+  orders           Order[]
+}
+
+model Order {
+  id                    String      @id @default(cuid())
+  supplierId            String
+  status                String      @default("pending")
+  triggerType           String
+  triggerReason         String?
+  totalAmount           Float
+  estimatedDeliveryDate DateTime
+  createdAt             DateTime    @default(now())
+  sentAt                DateTime?
+  deliveredAt           DateTime?
+
+  supplier              Supplier    @relation(fields: [supplierId], references: [id])
+  items                 OrderItem[]
+}
+
+model OrderItem {
+  id         String  @id @default(cuid())
+  orderId    String
+  productId  String
+  quantity   Int
+  unitPrice  Float
+  totalPrice Float
+
+  order      Order   @relation(fields: [orderId], references: [id])
+  product    Product @relation(fields: [productId], references: [id])
+}
+
+model StockMovement {
+  id             String   @id @default(cuid())
+  productId      String
+  type           String
+  quantityChange Int
+  stockBefore    Int
+  stockAfter     Int
+  referenceId    String?
+  note           String?
+  createdAt      DateTime @default(now())
+  createdBy      String
+
+  product        Product  @relation(fields: [productId], references: [id])
+}

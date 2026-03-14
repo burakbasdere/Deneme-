@@ -1,65 +1,79 @@
-import Image from "next/image";
+import { db } from "@/lib/db";
+import MetricGrid from "@/components/dashboard/MetricGrid";
+import AlertList from "@/components/dashboard/AlertList";
+import QuickStats from "@/components/dashboard/QuickStats";
 
-export default function Home() {
+export const dynamic = "force-dynamic"; // Always fetch fresh data
+
+export default async function Dashboard() {
+  const [
+    totalProducts,
+    alerts,
+    recentSales,
+    pendingOrders,
+  ] = await Promise.all([
+    db.product.count(),
+    db.product.findMany({
+      where: {
+        currentStock: {
+          lte: db.product.fields.warningLevel, // Compare currentStock <= warningLevel
+        },
+      },
+      orderBy: { currentStock: "asc" },
+      take: 10,
+    }),
+    db.saleRecord.findMany({
+      include: { product: true },
+      orderBy: { soldAt: "desc" },
+      take: 5,
+    }),
+    db.order.count({
+      where: { status: "pending" },
+    }),
+  ]);
+
+  // Calculate current week sales strictly
+  const oneWeekAgo = new Date();
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+  
+  const weeklySalesData = await db.saleRecord.aggregate({
+    _sum: {
+      totalAmount: true,
+    },
+    where: {
+      soldAt: {
+        gte: oneWeekAgo,
+      },
+    },
+  });
+
+  const weeklySales = weeklySalesData._sum.totalAmount || 0;
+  const criticalCount = alerts.filter(p => p.currentStock <= p.criticalLevel).length;
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+      <div className="flex justify-between items-end mb-2">
+        <div>
+          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 mb-1">
+            Genel Bakış
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="text-slate-500 font-medium">
+            Stok durumunuz ve son satış aktiviteleri
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      </div>
+
+      <MetricGrid 
+        totalProducts={totalProducts} 
+        criticalCount={criticalCount}
+        weeklySales={weeklySales}
+        pendingOrders={pendingOrders}
+      />
+      
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <AlertList alerts={alerts} />
+        <QuickStats recentSales={recentSales} />
+      </div>
     </div>
   );
 }
