@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { calculateForecast } from "@/lib/forecast";
+import { calculateForecast, generateMockTrendData } from "@/lib/forecast";
 import ForecastChart from "@/components/forecast/ForecastChart";
 import ForecastTable from "@/components/forecast/ForecastTable";
 import { BrainCircuit, RefreshCw, CalendarDays } from "lucide-react";
@@ -7,9 +7,6 @@ import { BrainCircuit, RefreshCw, CalendarDays } from "lucide-react";
 export const dynamic = "force-dynamic";
 
 export default async function ForecastPage() {
-  // Demo amaçlı, veritabanındaki tüm satışları çekip en çok satanı alacağız
-  // Gerçekte burada ProductSelector ile tek ürün bazlı gösterim gerekir.
-  
   const topProduct = await db.product.findFirst({
     include: { sales: true },
     orderBy: { sales: { _count: "desc" } }
@@ -23,15 +20,24 @@ export default async function ForecastPage() {
     );
   }
 
-  // Get past sales by week to mock "actual" data for the chart
-  const pastWeeks = 5;
-  const actualDataDemo = Array.from({ length: pastWeeks }).map((_, i) => ({
-    week: `Geçmiş ${pastWeeks - i}.Hafta`,
-    actual: Math.floor(Math.random() * 50) + 10 // Mock actual data directly for the UI representation
-  }));
+  // Modelin yeteneklerini sergilemek için 10 haftalık artış trendinde mock data üretiyoruz
+  const pastWeeks = 10;
+  const mockTrendSales = generateMockTrendData(pastWeeks, 20, 5); // 20'den başla, her hafta ort. 5 artış (trend)
+  
+  // Create actual UI data mapping from the mock raw data
+  // Using the same algorithm logic to group it back for charting the "past"
+  const actualDataDemo = [];
+  let currentBase = 20;
+  for (let i = 0; i < pastWeeks; i++) {
+    actualDataDemo.push({
+      week: `Geçmiş ${pastWeeks - i}.Hafta`,
+      actual: Math.round(currentBase)
+    });
+    currentBase += 5;
+  }
 
-  // Run the algorithm on the real sales data
-  const forecastResults = calculateForecast(topProduct.sales, 3);
+  // Run Holt-Winters algorithm on the mock trend data
+  const forecastResults = calculateForecast(mockTrendSales, 3);
   
   const predictedDataChart = forecastResults.map(f => ({
     week: `Gelecek ${f.week}.Hafta`,
@@ -49,13 +55,13 @@ export default async function ForecastPage() {
             Satış Tahminleri <BrainCircuit className="w-8 h-8 text-fuchsia-500" />
           </h1>
           <p className="text-slate-500 font-medium">
-             Yapay zeka ve istatistiksel modellerle gelecek talepleri öngörün.
+             Yapay zeka ve Holt-Winters modeli ile gelecek talepleri öngörün.
           </p>
         </div>
         
         <div className="flex items-center gap-3">
           <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl font-medium hover:bg-slate-50 shadow-sm transition-all">
-            <CalendarDays className="w-4 h-4 text-slate-500" /> Son 30 Gün
+            <CalendarDays className="w-4 h-4 text-slate-500" /> Detaylar
           </button>
           <button className="flex items-center gap-2 px-4 py-2 bg-slate-900 border border-transparent text-white rounded-xl font-medium hover:bg-slate-800 shadow-md transition-all">
             <RefreshCw className="w-4 h-4" /> Modeli Yeniden Eğit
@@ -65,12 +71,12 @@ export default async function ForecastPage() {
 
       <div className="bg-gradient-to-r from-fuchsia-50 to-indigo-50 border border-indigo-100 rounded-2xl p-6 mb-8 flex items-center justify-between">
         <div>
-          <h2 className="text-sm font-bold text-indigo-900 mb-1 uppercase tracking-wider">Aktif Ürün</h2>
+          <h2 className="text-sm font-bold text-indigo-900 mb-1 uppercase tracking-wider">Aktif Ürün (Örnek Trend Verisiyle)</h2>
           <p className="text-xl font-bold text-slate-900">{topProduct.name} <span className="text-sm font-normal text-slate-500">({topProduct.barcode})</span></p>
         </div>
         <div className="text-right hidden sm:block">
           <h2 className="text-sm font-bold text-indigo-900 mb-1 uppercase tracking-wider">Kullanılan Algoritma</h2>
-          <p className="font-medium text-slate-700">Ağırlıklı Hareketli Ortalama (WMA)</p>
+          <p className="font-medium text-slate-700">Çift Üstel Düzeltme (Holt-Winters)</p>
         </div>
       </div>
 

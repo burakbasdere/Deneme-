@@ -1,6 +1,10 @@
 import { SaleRecord } from "@prisma/client";
 
-// Ağırlıklı hareketli ortalama kullanarak haftalık satış tahmini
+/**
+ * DOUBLE EXPONENTIAL SMOOTHING (Holt's Linear Trend Method)
+ * Zaman serisi verilerinde hem "seviyeyi" (level) hem de "trendi" (trend) öğrenerek
+ * geleceğe yönelik daha tutarlı tahminler yapar.
+ */
 export function calculateForecast(salesHistory: SaleRecord[], weeksAhead: number = 3) {
   if (salesHistory.length === 0) {
     return Array.from({ length: weeksAhead }).map((_, i) => ({
@@ -10,37 +14,61 @@ export function calculateForecast(salesHistory: SaleRecord[], weeksAhead: number
     }));
   }
 
-  // Adım 1: Haftalık satışları grupla
+  // 1. Satışları haftalık olarak grupla
   const weeklyTotals = groupByWeek(salesHistory);
   
-  if (weeklyTotals.length === 0) {
+  // Eğer sadece 1 haftalık veri varsa trend hesaplanamaz, basit kopyalama yap
+  if (weeklyTotals.length === 1) {
     return Array.from({ length: weeksAhead }).map((_, i) => ({
       week: i + 1,
-      predicted: 0,
-      confidence: 0,
+      predicted: weeklyTotals[0],
+      confidence: 0.5,
     }));
   }
 
-  // Adım 2: Ağırlıklı hareketli ortalama (son haftalar daha ağır)
-  // Max 5 hafta geriye bak, her hafta için ağırlık: [1, 2, 3, 4, 5]
-  const weights = [1, 2, 3, 4, 5];
-  const recentWeeks = weeklyTotals.slice(-5);
-  const actualWeights = weights.slice(5 - recentWeeks.length);
+  // ALGORİTMA PARAMETRELERİ (Gerçekte bunlar geçmiş veri ile optimize edilebilir)
+  const alpha = 0.4;  // Data Smoothing Factor (Yeniliğe ne kadar hızlı tepki verecek)
+  const beta = 0.3;   // Trend Smoothing Factor (Trend değişimine ne kadar hızlı tepki verecek)
+
+  // 2. Başlangıç Değerleri
+  // Level(0) = Y(0)
+  // Trend(0) = Y(1) - Y(0)
+  let currentLevel = weeklyTotals[0];
+  let currentTrend = weeklyTotals.length > 1 ? (weeklyTotals[1] - weeklyTotals[0]) : 0;
   
-  const weightedAvg = calculateWeightedAverage(recentWeeks, actualWeights);
-  
-  // Adım 3: Trend hesapla (artıyor mu azalıyor mu)
-  const trend = calculateTrend(weeklyTotals);
-  
-  // Adım 4: Her hafta için tahmin üret
+  // Modeli eğit (Son noktaya kadar simüle et)
+  for (let i = 1; i < weeklyTotals.length; i++) {
+    const actual = weeklyTotals[i];
+    
+    // Önceki duruma göre değerleri sakla
+    const lastLevel = currentLevel;
+    
+    // Yeni Seviye = a * Gerçek + (1-a) * (Eski Seviye + Eski Trend)
+    currentLevel = alpha * actual + (1 - alpha) * (lastLevel + currentTrend);
+    
+    // Yeni Trend = b * (Yeni Seviye - Eski Seviye) + (1-b) * Eski Trend
+    currentTrend = beta * (currentLevel - lastLevel) + (1 - beta) * currentTrend;
+  }
+
+  // 3. Gelecek Tahminleri (Forecasting)
+  // Y(t+m) = Level(t) + m * Trend(t)
   const forecasts = [];
+  
+  // Güven skoru için basit bir hata sapması varsayımı
+  // Uzak gelecekte trendin sapma ihtimali daha yüksektir.
+  const baseConfidence = 0.92;
+
   for (let i = 1; i <= weeksAhead; i++) {
-    // Negatif tahmin olmamasını sağla
-    const predicted = Math.max(0, Math.round(weightedAvg + (trend * i)));
+    const prediction = Math.max(0, Math.round(currentLevel + (i * currentTrend)));
+    
+    // i (hafta) arttıkça güven skoru üssel olarak düşer
+    const confidenceDrop = Math.pow(1.15, i) * 0.05;
+    const confidence = Math.max(0.4, baseConfidence - confidenceDrop);
+
     forecasts.push({
       week: i,
-      predicted,
-      confidence: Math.max(0.5, 0.95 - (i * 0.1)), // Uzak tahmin = düşük güven
+      predicted: prediction,
+      confidence: confidence,
     });
   }
   
@@ -48,10 +76,8 @@ export function calculateForecast(salesHistory: SaleRecord[], weeksAhead: number
 }
 
 function groupByWeek(sales: SaleRecord[]): number[] {
-  // Basit gruplama (örnek demo algoritması: 7'şer günlük dilimlere ayırır)
   if (sales.length === 0) return [];
   
-  // En eski ve en yeni tarih
   const sorted = [...sales].sort((a, b) => a.soldAt.getTime() - b.soldAt.getTime());
   const startDate = sorted[0].soldAt;
   
@@ -65,37 +91,49 @@ function groupByWeek(sales: SaleRecord[]): number[] {
     weeks.set(weekIndex, (weeks.get(weekIndex) || 0) + sale.quantity);
   });
 
-  // Eksik haftaları 0 ile doldur
   const maxWeek = Math.max(...Array.from(weeks.keys()));
-  const result: number[] = [];
+  const result: any[] = [];
   
   for (let i = 0; i <= maxWeek; i++) {
-    result.push(weeks.get(i) || 0);
+    result.push({weekIndex: i, value: weeks.get(i) || 0});
   }
   
-  return result;
+  // Sıralı diziyi dön (0'lar dahil)
+  return result.map(r => r.value);
 }
 
-function calculateWeightedAverage(data: number[], weights: number[]): number {
-  let sum = 0;
-  let weightSum = 0;
+// GUI/UI testi için yapay (Mock) ama trend içeren gerçekçi satış serisi üreten fonksiyon
+export function generateMockTrendData(weeks: number, startBase: number, trendSlope: number): SaleRecord[] {
+  const records: SaleRecord[] = [];
+  const now = new Date();
   
-  for (let i = 0; i < data.length; i++) {
-    sum += data[i] * weights[i];
-    weightSum += weights[i];
+  let currentBase = startBase;
+  
+  for (let w = weeks - 1; w >= 0; w--) {
+    // Biraz rastgelelik (Noise) ekle, +/- %15 sapma
+    const noise = currentBase * (Math.random() * 0.3 - 0.15);
+    const weeklySalesCount = Math.max(0, Math.round(currentBase + noise));
+    
+    // Satışları haftanın günlerine dağıt (Veritabanı modeli SaleRecord objesi gibi simüle et)
+    for (let s = 0; s < weeklySalesCount; s++) {
+      const pastDate = new Date(now.getTime() - (w * 7 * 24 * 60 * 60 * 1000));
+      // Haftanın rastgele bir gününe/saatine dağıt
+      pastDate.setHours(pastDate.getHours() - Math.floor(Math.random() * 168));
+      
+      records.push({
+        id: `mock_sale_${w}_${s}`,
+        productId: "mock_product_1",
+        quantity: 1, // Satış başına 1 ürün
+        salePrice: 15.0,
+        totalAmount: 15.0,
+        soldAt: pastDate,
+        cashierId: null
+      });
+    }
+    
+    // Sonraki hafta için taban sayıyı trende göre arttır/azalt
+    currentBase += trendSlope; 
   }
   
-  return weightSum === 0 ? 0 : sum / weightSum;
-}
-
-function calculateTrend(data: number[]): number {
-  if (data.length < 2) return 0;
-  
-  // Basit lineer eğim hesabı
-  let trendSum = 0;
-  for (let i = 1; i < data.length; i++) {
-    trendSum += data[i] - data[i - 1];
-  }
-  
-  return trendSum / (data.length - 1);
+  return records;
 }
